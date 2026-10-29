@@ -38,9 +38,6 @@ An end-to-end, reproducible pipeline over **live German federal public-health da
 All RKI datasets are published under **CC-BY 4.0** with a DOI on Zenodo.
 
 #@@ CODE
-# =============================================================================
-# CELL 1 — Environment setup
-# =============================================================================
 # Heavy DL libraries are only needed for the forecasting step (Cell 21+).
 # Set INSTALL_FORECAST = False to run the data pipeline alone in ~15 seconds.
 
@@ -54,7 +51,7 @@ print(f"Colab environment : {IN_COLAB}")
 def pip(*args):
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args], check=False)
 
-# --- Core pipeline (light) ---
+# Core pipeline (light)
 for mod, spec in [("pandas", "pandas"), ("pyarrow", "pyarrow"), ("plotly", "plotly"),
                   ("requests", "requests"), ("statsmodels", "statsmodels")]:
     try:
@@ -63,15 +60,14 @@ for mod, spec in [("pandas", "pandas"), ("pyarrow", "pyarrow"), ("plotly", "plot
         print(f"installing {spec} ...")
         pip(spec)
 
-# --- Forecasting (heavy) ---
+# Forecasting (heavy)
 if INSTALL_FORECAST:
     try:
         import darts
         print(f"darts already present: {darts.__version__}")
     except ImportError:
         print("installing darts (2-4 min, one time) ...")
-        # u8darts[torch] pulls PyTorch Lightning without the statsforecast/prophet
-        # extras we do not need -> much faster, fewer dependency conflicts.
+        # u8darts[torch] skips the statsforecast/prophet extras.
         pip("u8darts[torch]")
 
 print("\n--- GPU ---")
@@ -79,9 +75,6 @@ subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version",
                 "--format=csv,noheader"], check=False)
 
 #@@ CODE
-# =============================================================================
-# CELL 2 — Imports & configuration
-# =============================================================================
 import io, json, re, time, warnings, hashlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -96,16 +89,15 @@ from plotly.subplots import make_subplots
 warnings.filterwarnings("ignore", category=FutureWarning)
 pd.set_option("display.max_columns", 60, "display.width", 200)
 
-# ----------------------------- CONFIG ---------------------------------------
+# CONFIG
 CFG = dict(
     # Where everything lands. On Colab this is ephemeral; mount Drive to persist.
     OUT_DIR        = Path("/content/rki_output" if IN_COLAB else "./rki_output"),
     CACHE_DIR      = Path("/content/rki_cache"  if IN_COLAB else "./rki_cache"),
 
-    # --- Forecasting ---
-    # Which series to forecast. 'ARE' = syndromic consultation incidence
-    # (14 seasons of history, recommended). 'INFLUENZA' = lab-confirmed IfSG
-    # (only 6 seasons, 3 of them distorted by COVID-19 measures -- see Cell 20).
+    # Forecasting
+    # 'ARE' has 14 seasons of history. 'INFLUENZA' has 6, three of them
+    # distorted by COVID-19 measures.
     FORECAST_TARGET = "ARE",
     MODEL           = "NBEATS",   # 'NBEATS' | 'TFT'
     HORIZON         = 8,          # weeks ahead
@@ -114,7 +106,7 @@ CFG = dict(
     BATCH_SIZE      = 64,
     SEED            = 42,
 
-    # Backtest: hold out the final N weeks for honest evaluation
+    # Hold out the final N weeks for evaluation
     BACKTEST_WEEKS  = 78,
 
     HTTP_TIMEOUT    = 60,
@@ -138,8 +130,7 @@ def _recording_show(self, *a, **k):
 go.Figure.show = _recording_show
 
 # Optional Destatis GENESIS credentials (free registration at destatis.de).
-# Leave blank -> the pipeline skips GENESIS and derives denominators from RKI
-# data instead (see Cell 13). Nothing downstream breaks.
+# Leave blank to skip GENESIS and derive denominators from RKI data instead.
 GENESIS_TOKEN = ""   # API token, or set GENESIS_USER / GENESIS_PASS below
 GENESIS_USER, GENESIS_PASS = "", ""
 
@@ -160,9 +151,6 @@ This matters, because RKI has changed its publishing model several times and mos
 Each source below therefore carries its URL **and** its Zenodo DOI, so a reviewer can reproduce the exact snapshot even if the repository layout changes again.
 
 #@@ CODE
-# =============================================================================
-# CELL 3 — Source registry + resilient fetcher
-# =============================================================================
 RKI_RAW = "https://raw.githubusercontent.com/robert-koch-institut"
 
 SOURCES = {
@@ -185,11 +173,10 @@ SOURCES = {
     "vacc": dict(
         url=f"{RKI_RAW}/Inanspruchnahme_von_Routineimpfungen_in_Deutschland-Ergebnisse_aus_der_KV-Impfsurveillance/main/KVIS_Impfquoten_Erwachsene.tsv",
         sep="\t", doi="10.5281/zenodo.14742533",
-        label="Impfquoten Erwachsene — KV-Impfsurveillance"),
+        label="Impfquoten Erwachsene, KV-Impfsurveillance"),
 }
 
 HEADERS = {"User-Agent": "portfolio-analytics/1.0 (public health data pipeline; contact via GitHub)"}
-
 
 def fetch(key: str, force: bool = False) -> pd.DataFrame:
     """Download one source into a DataFrame.
@@ -241,7 +228,6 @@ def fetch(key: str, force: bool = False) -> pd.DataFrame:
     return pd.read_csv(cache, sep=src["sep"], dtype=str, encoding="utf-8-sig",
                        keep_default_na=False, na_values=["", "NA", "N/A", "null", "-"])
 
-
 print("Fetching RKI open data ...")
 RAW = {}
 for k in SOURCES:
@@ -252,12 +238,6 @@ for k, df in RAW.items():
     print(f"  {k:<10} {df.shape[0]:>8,} rows x {df.shape[1]:>2} cols   {SOURCES[k]['label'][:55]}")
 
 #@@ CODE
-# =============================================================================
-# CELL 4 — Provenance snapshot (reproducibility)
-# =============================================================================
-# A reviewer must be able to tell exactly which data version produced a chart.
-# We hash every cached file and record it in the export manifest.
-
 PROVENANCE = []
 for k, src in SOURCES.items():
     f = CFG["CACHE_DIR"] / f"{k}{Path(src['url']).suffix}"
@@ -290,12 +270,8 @@ Four datasets, four different ways of naming the same 16 federal states. This is
 | **BOM** | the influenza TSV starts with a UTF-8 byte-order mark | `encoding='utf-8-sig'` |
 
 #@@ CODE
-# =============================================================================
-# CELL 5 — Canonical region dimension + crosswalk
-# =============================================================================
-# The single source of truth for regional identity. AGS = Amtlicher
-# Gemeindeschlüssel (official municipality key); the first two digits identify
-# the Bundesland. Centroids are approximate, for point maps / label placement.
+# AGS = Amtlicher Gemeindeschlüssel. First two digits identify the Bundesland.
+# Centroids are approximate, for point maps and label placement.
 
 BUNDESLAENDER = [
     # AGS, official name,            ISO 3166-2, short, lat,   lon
@@ -325,8 +301,7 @@ dim_region["east_west"] = dim_region["ags"].map(
     else ("Ost" if a in {"12", "13", "14", "15", "16"}
           else ("Berlin" if a == "11" else "West")))
 
-# Reverse lookup that tolerates every spelling variant seen in the wild:
-# umlauts, ASCII transliteration, and the different national labels.
+# Tolerates umlauts, ASCII transliteration and the different national labels.
 def _norm(s: str) -> str:
     s = str(s).strip().lower()
     for a, b in [("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")]:
@@ -337,33 +312,25 @@ NAME2AGS = {_norm(n): a for a, n, *_ in BUNDESLAENDER}
 NAME2AGS.update({_norm(k): "00" for k in
                  ["Bundesweit", "Bundesgebiet", "Gesamt", "Deutschland", "Total"]})
 
-
 def to_ags(series: pd.Series, by: str = "id") -> pd.Series:
     """Normalise a region column to canonical 2-digit AGS."""
     if by == "id":
         return series.astype(str).str.strip().str.zfill(2)
     return series.map(lambda x: NAME2AGS.get(_norm(x), None))
 
-
-# --- assertions: fail loudly now rather than produce a silent wrong join ---
+# Fail loudly rather than produce a silent wrong join
 assert to_ags(pd.Series(["Thüringen", "Thueringen", "THUERINGEN"]), by="name").eq("16").all()
 assert to_ags(pd.Series(["Bundesweit", "Deutschland", "Bundesgebiet"]), by="name").eq("00").all()
 assert to_ags(pd.Series(["Baden-Württemberg", "Baden-Wuerttemberg"]), by="name").eq("08").all()
 assert to_ags(pd.Series(["0", "1", "16"])).tolist() == ["00", "01", "16"]
-print("Region crosswalk OK —", len(dim_region), "regions (16 states + national)")
+print("Region crosswalk OK:", len(dim_region), "regions (16 states + national)")
 display(dim_region.head(4))
 
 #@@ CODE
-# =============================================================================
-# CELL 6 — ISO-8601 week and season helpers
-# =============================================================================
-# German surveillance is organised by ISO week ("Meldewoche" / "Kalenderwoche")
-# and by respiratory season, which runs W40 -> W39 of the following year.
-# Do NOT assume 52 weeks per year: 2015 and 2020 have 53, 2021 has 52, so
-# '2021-W53' is genuinely invalid input and must be caught, not coerced.
+# Seasons run W40 to W39. ISO years have 52 or 53 weeks: 2015 and 2020 have 53,
+# 2021 has 52, so '2021-W53' is invalid input and must be caught, not coerced.
 
 WEEK_PARSE_REJECTS = []      # every rejected label, for the quality report
-
 
 def iso_weeks_in_year(year):
     """Number of ISO weeks in an ISO year: 52 or 53.
@@ -380,7 +347,6 @@ def iso_weeks_in_year(year):
         out.loc[ok] = dec28.dt.isocalendar().week.astype(int).values
     return out
 
-
 def iso_week_to_monday(s, on_invalid="raise", label="?"):
     """'2026-W32' -> Timestamp('2026-08-03'), the Monday of that ISO week.
 
@@ -392,7 +358,7 @@ def iso_week_to_monday(s, on_invalid="raise", label="?"):
       week_out_of_range week number outside 1..53.
       week_nonexistent  well-formed, but that ISO year has no such week.
                         '2021-W53' is the canonical case: ISO 2021 has only 52
-                        weeks, so the label is plausible AND wrong -- exactly
+                        weeks, so the label is plausible and wrong, exactly
                         the kind of upstream error that must fail loudly rather
                         than be coerced to NaT and dropped by a later dropna().
 
@@ -426,12 +392,12 @@ def iso_week_to_monday(s, on_invalid="raise", label="?"):
         iso = (year[ok].astype(int).astype(str) + "-W"
                + week[ok].astype(int).astype(str).str.zfill(2) + "-1")
         parsed = pd.to_datetime(iso, format="%G-W%V-%w", errors="coerce")
-        # Belt and braces: anything the classifier passed but strptime still
-        # rejects is a bug in this function, not a problem in the data.
+        # Anything the classifier passed but strptime rejects is a bug here,
+        # not a problem in the data.
         if parsed.isna().any():
             raise AssertionError(
                 f"[{label}] classifier passed labels that %G-W%V-%w rejected: "
-                f"{sorted(set(raw[ok][parsed.isna()]))[:5]} -- bug in "
+                f"{sorted(set(raw[ok][parsed.isna()]))[:5]}, bug in "
                 f"iso_week_to_monday, not in the source data")
         out.loc[ok] = parsed
 
@@ -453,21 +419,18 @@ def iso_week_to_monday(s, on_invalid="raise", label="?"):
             print("  ! " + msg.replace("\n", "\n    "))
     return out
 
-
 def season_of(ts: pd.Series) -> pd.Series:
     """Respiratory season label: W40 starts the new season. -> '2025/26'."""
     y, w = ts.dt.isocalendar().year, ts.dt.isocalendar().week
     start = np.where(w >= 40, y, y - 1)
     return pd.Series([f"{a}/{str(a + 1)[-2:]}" for a in start], index=ts.index)
 
-
 def week_of_season(ts: pd.Series) -> pd.Series:
     """Position within the season, 1 = W40. Lets seasons be overlaid on one axis."""
     w = ts.dt.isocalendar().week.astype(int)
     return pd.Series(np.where(w >= 40, w - 39, w + 13), index=ts.index)
 
-
-# --- assertions on the real edge cases ---
+# Edge cases
 assert [int(iso_weeks_in_year(pd.Series([y])).iloc[0]) for y in (2015, 2020, 2021, 2026)] \
        == [53, 53, 52, 53], "ISO week-count rule is wrong"
 
@@ -480,8 +443,7 @@ assert _t[3] == pd.Timestamp("2020-12-28"), "2020 really does have a W53"
 assert _t[4] == pd.Timestamp("2026-01-26"), "unpadded week numbers accepted"
 assert pd.isna(_t[5]), "missing input -> NaT, and must not raise"
 
-# 2021-W53 does not exist. It must not parse, must not quietly become NaT,
-# and must be distinguishable from ordinary garbage.
+# 2021-W53 does not exist, and must be distinguishable from ordinary garbage.
 for bad_label, expected in [("2021-W53", "week_nonexistent"),
                             ("2026-W54", "week_out_of_range"),
                             ("2026-W00", "week_out_of_range"),
@@ -501,12 +463,9 @@ WEEK_PARSE_REJECTS.clear()          # discard the self-test rejects
 
 assert season_of(pd.Series([pd.Timestamp("2025-10-06")])).iloc[0] == "2025/26"
 assert season_of(pd.Series([pd.Timestamp("2026-02-02")])).iloc[0] == "2025/26"
-print("Week/season helpers OK — invalid ISO weeks raise by default")
+print("Week/season helpers OK: invalid ISO weeks raise by default")
 
 #@@ CODE
-# =============================================================================
-# CELL 7 — Clean the IfSG notification data (influenza + RSV)
-# =============================================================================
 # Shared schema: Meldewoche | Region | Region_Id | Altersgruppe | Fallzahl | Inzidenz
 
 def clean_ifsg(df: pd.DataFrame, pathogen: str) -> pd.DataFrame:
@@ -521,8 +480,7 @@ def clean_ifsg(df: pd.DataFrame, pathogen: str) -> pd.DataFrame:
     out["pathogen"] = pathogen
     out["source"] = "IfSG-Meldedaten"
 
-    # Cross-check the name column against the ID column. A mismatch would mean
-    # RKI changed the layout -> better to know immediately.
+    # A name/ID mismatch would mean RKI changed the layout.
     by_name = to_ags(df["Region"], by="name")
     mism = (by_name != out["ags"]) & by_name.notna()
     if mism.any():
@@ -530,21 +488,20 @@ def clean_ifsg(df: pd.DataFrame, pathogen: str) -> pd.DataFrame:
 
     before = len(out)
     out = out.dropna(subset=["week_start", "ags"])
-    # 'Unbekannt' = age not reported. Keep it in the fact table for
-    # completeness accounting, but it must never enter a rate calculation.
+    # 'Unbekannt' = age not reported. Kept for completeness accounting,
+    # never used in a rate.
     out["age_known"] = out["age_group"].ne("Unbekannt")
     print(f"  {pathogen:<10} {before:>7,} -> {len(out):>7,} rows | "
           f"{out['week_start'].min():%Y-%m-%d} .. {out['week_start'].max():%Y-%m-%d} | "
           f"incidence missing: {out['incidence'].isna().sum():,}")
     return out
 
-
 print("Cleaning IfSG notification data ...")
 flu = clean_ifsg(RAW["influenza"], "Influenza")
 rsv = clean_ifsg(RAW["rsv"], "RSV")
 ifsg = pd.concat([flu, rsv], ignore_index=True)
 
-# Integrity: the primary key must be unique.
+# The primary key must be unique.
 key = ["pathogen", "ags", "iso_week", "age_group"]
 dupes = ifsg.duplicated(key).sum()
 assert dupes == 0, f"{dupes} duplicate rows on {key}"
@@ -552,14 +509,11 @@ print(f"  combined: {len(ifsg):,} rows, primary key unique on {key}")
 display(ifsg.head(3))
 
 #@@ CODE
-# =============================================================================
-# CELL 8 — Clean ARE consultation incidence (syndromic sentinel surveillance)
-# =============================================================================
 # Schema: Saison | Kalenderwoche | Bundesland | Bundesland_ID | Altersgruppe |
 #         ARE_Konsultationsinzidenz
-# Note the unpadded IDs ('0','1',...) and ASCII state names ('Thueringen').
-# This series reaches back to 2012-W40 -- 14 seasons -- which is why it, and not
-# the 2020-onwards influenza series, is the default forecasting target.
+# Unpadded IDs ('0','1',...) and ASCII state names ('Thueringen').
+# Reaches back to 2012-W40, which is why this and not the 2020-onwards
+# influenza series is the default forecasting target.
 
 are = pd.DataFrame({
     "week_start": iso_week_to_monday(RAW["are"]["Kalenderwoche"], label="ARE"),
@@ -571,7 +525,7 @@ are = pd.DataFrame({
 })
 are = are.dropna(subset=["week_start", "ags"])
 
-# Verify the publisher's own season label agrees with our W40 rule.
+# Check the publisher's season label against the W40 rule.
 are["season"] = season_of(are["week_start"])
 mismatch = are["season"].ne(are["season_raw"]).mean()
 print(f"  ARE: {len(are):,} rows | {are['week_start'].min():%Y-%m-%d} .. "
@@ -583,12 +537,9 @@ print(f"  ASCII->AGS mapping verified, e.g. Thueringen -> "
       f"{to_ags(pd.Series(['Thueringen']), by='name').iloc[0]}")
 
 #@@ CODE
-# =============================================================================
-# CELL 9 — Clean ICU capacity (DIVI-Intensivregister), daily -> weekly
-# =============================================================================
-# Daily, state-level, adults. We aggregate to ISO weeks so it aligns with the
-# surveillance data. Occupancy is a *stock* (a level, not a flow), so it must be
-# averaged over the week -- summing beds across 7 days would be meaningless.
+# Daily, state-level, adults. Aggregated to ISO weeks to align with the
+# surveillance data. Occupancy is a stock, not a flow, so it is averaged over
+# the week; summing beds across 7 days would be meaningless.
 
 icu_raw = RAW["icu"]
 num_cols = ["anzahl_meldebereiche", "faelle_covid_aktuell", "intensivbetten_belegt",
@@ -609,9 +560,8 @@ icu = icu.dropna(subset=["datum", "ags"])
 icu["iso_week"] = (icu["datum"].dt.isocalendar().year.astype(str) + "-W"
                    + icu["datum"].dt.isocalendar().week.astype(int).astype(str).str.zfill(2))
 
-# The emergency-reserve column is empty for the first ~2 200 rows because that
-# field was introduced later. That is a *structural* absence, not a zero:
-# imputing 0 would invent capacity that was never reported.
+# The emergency-reserve field was introduced later, so early rows are empty.
+# A structural absence, not a zero: imputing 0 would invent capacity.
 print(f"  notfallreserve reported from "
       f"{icu.loc[icu['intensivbetten_7_tage_notfallreserve'].notna(), 'datum'].min():%Y-%m-%d} "
       f"onwards ({icu['intensivbetten_7_tage_notfallreserve'].isna().sum():,} earlier rows left NaN)")
@@ -621,7 +571,7 @@ icu_w = (icu.groupby(["ags", "iso_week"], as_index=False)
                  days_reported=("datum", "nunique")))
 icu_w["week_start"] = iso_week_to_monday(icu_w["iso_week"], label="ICU")
 
-# Derived capacity-stress indicators -- the analytically interesting part.
+# Capacity-stress indicators
 beds_total = icu_w["intensivbetten_belegt"] + icu_w["intensivbetten_frei"]
 icu_w["icu_beds_operable"]   = beds_total
 icu_w["icu_occupancy_rate"]  = (icu_w["intensivbetten_belegt"] / beds_total * 100).round(2)
@@ -634,13 +584,13 @@ icu_w["pct_units_restricted"] = ((icu_w["betriebssituation_teilweise_eingeschrae
 icu_w["pct_units_staff_limited"] = (icu_w["einschraenkung_personal"]
                                     / reporting.replace(0, np.nan) * 100).round(2)
 
-# Partial weeks at the series edges would look like a capacity collapse.
+# Partial weeks at the edges would look like a capacity collapse.
 partial = icu_w["days_reported"] < 7
 print(f"  dropping {partial.sum()} partial week(s) at series edges")
 icu_w = icu_w[~partial].copy()
 
-# DIVI publishes no national row -> build one (population-weighted by construction,
-# because we sum the underlying bed counts rather than averaging state rates).
+# DIVI publishes no national row. Summing the underlying bed counts is
+# population-weighted by construction; averaging state rates would not be.
 nat = (icu_w.groupby("iso_week", as_index=False)
             .agg(intensivbetten_belegt=("intensivbetten_belegt", "sum"),
                  intensivbetten_frei=("intensivbetten_frei", "sum"),
@@ -659,16 +609,13 @@ display(icu_w[["ags", "iso_week", "icu_beds_operable", "icu_occupancy_rate",
                "pct_units_staff_limited"]].tail(3))
 
 #@@ CODE
-# =============================================================================
-# CELL 10 — Clean KV-Impfsurveillance vaccination coverage
-# =============================================================================
-# THE SUBTLE ONE. 'Regionalschluessel_Kreis' arrives in three different widths:
+# 'Regionalschluessel_Kreis' arrives in three widths:
 #   width 4 -> district in states 01-09, leading zero lost  ('1001' = Flensburg)
 #   width 5 -> district in states 10-16                     ('10041' = Saarland)
 #   width 2 -> NOT a district at all, but a state-level aggregate row
-# A naive .zfill(5) would turn the Schleswig-Holstein aggregate '01' into
-# district '00001', which does not exist, and would double-count every state
-# total into the district layer. Split the layers first, pad second.
+# A naive .zfill(5) turns the Schleswig-Holstein aggregate '01' into district
+# '00001', which does not exist, and folds state totals into the district
+# layer. Split the layers first, pad second.
 
 v = RAW["vacc"].copy()
 v["rs"] = v["Regionalschluessel_Kreis"].astype(str).str.strip()
@@ -703,10 +650,9 @@ vacc = pd.concat([tidy_vacc(v_kreis, "kreis"), tidy_vacc(v_state, "bundesland")]
                  ignore_index=True)
 vacc = vacc.dropna(subset=["coverage_pct"])
 
-# The headline indicator for a flu dashboard: influenza coverage in the 60+
-# group, the population STIKO recommends and where severe outcomes concentrate.
-# Coverage is a rate, so aggregating districts to a state requires weighting by
-# population -- a plain mean would give Flensburg the same weight as Cologne.
+# Influenza coverage in the 60+ group, the population STIKO recommends.
+# Coverage is a rate, so district-to-state aggregation is population-weighted;
+# a plain mean would give Flensburg the same weight as Cologne.
 flu_vacc_kreis = vacc[(vacc["vaccine"] == "Influenza")
                       & (vacc["target_group"] == "Personen ab 60 Jahren")
                       & (vacc["age_group"] == "Gesamt")
@@ -736,19 +682,13 @@ print(f"  influenza 60+ coverage: {len(fact_vaccination):,} region-seasons | "
 display(fact_vaccination[fact_vaccination["ags"] == "00"].tail(4))
 
 #@@ CODE
-# =============================================================================
-# CELL 11 — Population denominators
-# =============================================================================
-# We need population per state for per-100k rates and for the choropleth.
-# Destatis GENESIS table 12411 is the official source, but it now requires a
-# free account (verified 2026-08-19: anonymous/GAST -> 'Code 15 not authorised').
-#
-# So the DEFAULT path derives the denominator from RKI's own published figures:
-#   incidence = cases / population * 100000  =>  population = cases / incidence * 1e5
-# Taking the MEDIAN over all weeks with enough cases makes this robust to the
-# rounding in the published 2-decimal incidence. It has a real advantage over an
-# external table: it is *exactly* the denominator RKI used, so our recomputed
-# rates reconcile with the official ones instead of drifting by a percent.
+# Destatis GENESIS table 12411 is the official source but needs a free account
+# (checked 2026-08-19: anonymous and GAST both return 'Code 15 not authorised').
+# Default path inverts RKI's own published incidence instead:
+#   population = cases / incidence * 1e5
+# The median over weeks with enough cases absorbs the rounding in the published
+# 2-decimal incidence, and it is the same denominator RKI used, so recomputed
+# rates reconcile with the official ones.
 
 def derive_population(df: pd.DataFrame, min_cases: int = 50) -> pd.DataFrame:
     d = df[(df["age_group"] == "00+") & df["incidence"].gt(0) & df["cases"].ge(min_cases)]
@@ -765,7 +705,7 @@ display(pop.merge(dim_region[["ags", "region"]], on="ags")
            [["ags", "region", "population", "n_weeks", "rel_spread"]]
            .assign(rel_spread=lambda d: (d["rel_spread"] * 100).round(1)))
 
-# --- optional: cross-validate against Destatis GENESIS if credentials exist ---
+# Cross-check against Destatis GENESIS if credentials exist
 def genesis_population():
     if not (GENESIS_TOKEN or (GENESIS_USER and GENESIS_PASS)):
         print("\n  [skip] no GENESIS credentials set -> using RKI-derived denominators")
@@ -779,7 +719,7 @@ def genesis_population():
     else:
         data["username"], data["password"] = GENESIS_USER, GENESIS_PASS
     try:
-        # NOTE: GENESIS v2 requires POST; GET returns HTTP 405.
+        # GENESIS v2 requires POST; GET returns HTTP 405.
         r = requests.post(url, data=data, headers=HEADERS, timeout=CFG["HTTP_TIMEOUT"])
         r.raise_for_status()
         if r.text.lstrip().startswith("{"):
@@ -799,14 +739,6 @@ dim_region["pop_share_pct"] = (dim_region["population"]
                                * 100).round(2)
 
 #@@ CODE
-# =============================================================================
-# CELL 12 — Date dimension
-# =============================================================================
-# A proper date dimension is what makes a BI model behave. Power BI and Tableau
-# both need one table with one row per week to drive slicers and time
-# intelligence correctly -- especially with ISO weeks, which neither tool
-# handles well out of the box.
-
 all_weeks = pd.Index(sorted(set(ifsg["iso_week"]) | set(are["iso_week"])
                             | set(icu_w["iso_week"])))
 dim_date = pd.DataFrame({"iso_week": all_weeks})
@@ -820,7 +752,7 @@ dim_date["week_of_season"] = week_of_season(dim_date["week_start"])
 dim_date["month"]          = dim_date["week_start"].dt.month
 dim_date["quarter"]        = dim_date["week_start"].dt.quarter
 dim_date["year"]           = dim_date["week_start"].dt.year
-# Winter half-year: the operationally relevant window for respiratory disease
+# Winter half-year
 dim_date["is_resp_season"] = dim_date["iso_week_no"].isin(
     list(range(40, 54)) + list(range(1, 21)))
 dim_date = dim_date.reset_index(drop=True)
@@ -830,12 +762,6 @@ print(f"dim_date: {len(dim_date):,} weeks | {dim_date['week_start'].min():%Y-%m-
 display(dim_date.tail(3))
 
 #@@ CODE
-# =============================================================================
-# CELL 13 — Data quality report
-# =============================================================================
-# Every serious analyst deliverable ships with one of these. It is also the
-# artefact that gets asked about in interviews.
-
 checks = []
 
 def check(dataset, name, ok, detail=""):
@@ -894,21 +820,15 @@ print(f"{(dq['status'] == 'PASS').sum()}/{len(dq)} checks passed\n")
 display(dq[dq["status"] == "REVIEW"] if (dq["status"] == "REVIEW").any() else dq.head(12))
 
 #@@ CODE
-# =============================================================================
-# CELL 14 — Build the analysis mart (tidy fact tables)
-# =============================================================================
-# Tidy rules applied: one row per observation, one column per variable, explicit
-# keys, no values hidden in column names, no aggregates mixed into detail rows.
-
-# --- fact_incidence: long format across pathogens and age groups -------------
+# fact_incidence: long format across pathogens and age groups
 fact_incidence = (ifsg[["ags", "iso_week", "week_start", "pathogen", "age_group",
                         "cases", "incidence", "age_known", "source"]]
                   .merge(dim_date[["iso_week", "season", "week_of_season",
                                    "iso_year", "iso_week_no", "is_resp_season"]],
                          on="iso_week", how="left"))
 
-# Add ARE as a third "pathogen" (a syndrome, strictly speaking) so a single
-# dashboard visual can compare lab-confirmed and syndromic signals side by side.
+# ARE is a syndrome rather than a pathogen, but carrying it in the same column
+# lets one visual compare lab-confirmed and syndromic signals.
 are_fact = are.assign(pathogen="ARE (Syndrom)", cases=np.nan,
                       incidence=are["are_incidence"], age_known=True,
                       source="Sentinel-Surveillance")
@@ -923,7 +843,7 @@ fact_incidence = pd.concat(
 fact_incidence = fact_incidence.merge(dim_region[["ags", "region", "region_short"]],
                                       on="ags", how="left")
 
-# --- fact_icu ---------------------------------------------------------------
+# fact_icu
 fact_icu = (icu_w[["ags", "iso_week", "week_start", "icu_beds_operable",
                    "intensivbetten_belegt", "intensivbetten_frei",
                    "icu_occupancy_rate", "pct_units_staff_limited",
@@ -938,7 +858,7 @@ fact_icu = (icu_w[["ags", "iso_week", "week_start", "icu_beds_operable",
 fact_icu["icu_beds_per_100k"] = (fact_icu["icu_beds_operable"]
                                  / fact_icu["population"] * 1e5).round(2)
 
-# --- fact_vaccination -------------------------------------------------------
+# fact_vaccination
 fact_vaccination = fact_vaccination.merge(
     dim_region[["ags", "region", "region_short"]], on="ags", how="left")
 
@@ -949,7 +869,7 @@ print(f"fact_vaccination {len(fact_vaccination):>8,} rows")
 print(f"dim_region       {len(dim_region):>8,} rows")
 print(f"dim_date         {len(dim_date):>8,} rows")
 
-# Headline national series used repeatedly below
+# National series used repeatedly below
 nat_flu = (fact_incidence.query("ags=='00' and pathogen=='Influenza' and age_group=='00+'")
            .sort_values("week_start"))
 nat_are = (fact_incidence.query("ags=='00' and pathogen=='ARE (Syndrom)' and age_group=='00+'")
@@ -970,9 +890,6 @@ Four questions, in the order a public-health analyst would actually ask them:
 4. **Does prevention correlate with burden?** — vaccination coverage against subsequent incidence.
 
 #@@ CODE
-# =============================================================================
-# CELL 15 — EDA 1: national trend, both surveillance streams
-# =============================================================================
 fig = make_subplots(specs=[[{"secondary_y": True}]])
 
 fig.add_trace(go.Scatter(
@@ -990,14 +907,13 @@ fig.add_trace(go.Scatter(
     x=nat_rsv["week_start"], y=nat_rsv["incidence"], name="RSV (lab-confirmed) /100k",
     line=dict(color="#2563eb", width=1.8, dash="dot")), secondary_y=False)
 
-# Mark the period of pandemic non-pharmaceutical interventions -- essential
-# context, and the reason the forecasting section needs care.
+# Pandemic intervention period.
 fig.add_vrect(x0="2020-03-16", x1="2022-04-03", fillcolor="#f59e0b", opacity=0.10,
               layer="below", line_width=0,
               annotation_text="COVID-19 NPIs", annotation_position="top left")
 
 fig.update_layout(
-    title="Respiratory surveillance Germany — lab-confirmed cases vs. syndromic consultations<br>"
+    title="Respiratory surveillance Germany: lab-confirmed cases vs syndromic consultations<br>"
           "<sub>Sources: RKI IfSG notification data & ARE sentinel surveillance</sub>",
     template="plotly_white", height=520, hovermode="x unified",
     legend=dict(orientation="h", y=1.02, yanchor="bottom"))
@@ -1009,14 +925,10 @@ fig.show()
 print("Reading: the grey ARE band shows the true respiratory burden every winter,")
 print("including 2020/21 when it fell to a historic low. The red influenza line")
 print("shows near-zero lab-confirmed flu for two seasons, then an unusually early")
-print("and sharp return in 2022/23 -- the classic 'immunity debt' rebound pattern.")
+print("and sharp return in 2022/23, the classic 'immunity debt' rebound pattern.")
 
 #@@ CODE
-# =============================================================================
-# CELL 16 — EDA 2: seasonality — overlay every season on one axis
-# =============================================================================
-# Plotting week-of-season (1 = ISO W40) on the x-axis puts all seasons on a
-# comparable footing and makes peak-timing shifts visible at a glance.
+# Week-of-season on the x-axis puts every season on a comparable footing.
 
 ov = nat_are[nat_are["season"].notna()].copy()
 full = ov.groupby("season")["week_of_season"].count()
@@ -1034,17 +946,17 @@ for i, s in enumerate(seasons):
         opacity=1.0 if latest else 0.75))
 
 fig.update_layout(
-    title="Seasonality of acute respiratory illness — every season overlaid<br>"
+    title="Seasonality of acute respiratory illness: every season overlaid<br>"
           "<sub>x-axis: week of respiratory season (1 = ISO week 40). Latest season in red</sub>",
     xaxis_title="Week of season (1 = W40, ~early October)",
     yaxis_title="ARE consultation incidence /100k",
     template="plotly_white", height=520, hovermode="x unified")
 fig.add_vrect(x0=10, x1=22, fillcolor="#3b82f6", opacity=0.06, layer="below",
-              line_width=0, annotation_text="typical peak window (Dec–Feb)",
+              line_width=0, annotation_text="typical peak window (Dec-Feb)",
               annotation_position="top right")
 fig.show()
 
-# Quantify peak timing and height per season -- the table that goes on the slide
+# Peak timing and height per season
 peaks = (ov.loc[ov.groupby("season")["incidence"].idxmax(),
                 ["season", "iso_week", "week_of_season", "incidence"]]
          .rename(columns={"iso_week": "peak_week", "week_of_season": "peak_wos",
@@ -1059,9 +971,6 @@ print(f"Median peak: week {peaks['peak_wos'].median():.0f} of season "
       f"median height {peaks['peak_incidence'].median():,.0f} /100k")
 
 #@@ CODE
-# =============================================================================
-# CELL 17 — EDA 3: regional comparison across the 16 Bundesländer
-# =============================================================================
 states = dim_region.query("ags != '00'")["ags"].tolist()
 
 # (a) Current-season cumulative influenza incidence, ranked
@@ -1087,7 +996,7 @@ fig = px.bar(rank, x="cum_incidence", y="region", orientation="h",
              color_discrete_map={"Ost": "#dc2626", "West": "#2563eb", "Berlin": "#7c3aed"},
              labels=dict(cum_incidence=f"Cumulative influenza incidence /100k, {cur_season}",
                          region="", east_west="Region"),
-             title=f"Regional burden of influenza — season {cur_season}<br>"
+             title=f"Regional burden of influenza, season {cur_season}<br>"
                    f"<sub>Cumulative reported incidence per 100 000 population</sub>")
 fig.update_layout(template="plotly_white", height=560,
                   yaxis=dict(categoryorder="total ascending"))
@@ -1098,7 +1007,7 @@ ratio = rank["cum_incidence"].max() / rank["cum_incidence"].min()
 print(f"{rank.iloc[0]['region']} reports {ratio:.1f}x the cumulative incidence of "
       f"{rank.iloc[-1]['region']} in {cur_season}.")
 print("Caveat: notification incidence reflects testing intensity as well as true")
-print("infection pressure -- eastern states have historically tested more for")
+print("infection pressure, eastern states have historically tested more for")
 print("influenza, so this gap is partly surveillance artefact, not pure epidemiology.")
 
 # (b) ICU pressure vs. influenza incidence, national
@@ -1128,17 +1037,11 @@ print("scheduling, bed reductions) rather than by influenza alone, so a weak")
 print("correlation here is the expected and honest result.")
 
 #@@ CODE
-# =============================================================================
-# CELL 18 — EDA 4: vaccination coverage vs. disease burden
-# =============================================================================
-# An ecological comparison -- state-level, not individual-level. It cannot
-# establish vaccine effectiveness. Framed accordingly.
-
 burden = (fact_incidence.query("pathogen=='Influenza' and age_group=='60+' and ags != '00'")
           .groupby(["ags", "season"], as_index=False)
           .agg(cum_incidence_60plus=("incidence", "sum")))
-# fact_vaccination already carries region labels from Cell 14 -- merging them
-# again would produce region_x / region_y. Bring in only what is missing.
+# fact_vaccination already carries region labels; merging them again would
+# produce region_x / region_y.
 vb = (fact_vaccination.query("ags != '00'")
       .merge(burden, on=["ags", "season"], how="inner")
       .merge(dim_region[["ags", "east_west"]], on="ags"))
@@ -1178,7 +1081,7 @@ display(EW)
 top5_east = (inc_bloc.nlargest(5, "incidence")["east_west"] == "Ost").sum()
 print(f"{top5_east}/5 highest-incidence states are eastern.")
 print()
-print("Interpretation — and the caveats that matter in an interview:")
+print("Interpretation and caveats:")
 print("  * This is an ECOLOGICAL association. It says nothing about whether")
 print("    vaccination protected any individual (Robinson's ecological fallacy).")
 print(f"  * Note the apparent paradox: pooled across state-seasons the correlation")
@@ -1187,10 +1090,10 @@ print(f"    states have BOTH the higher coverage ({cov_bloc.get('Ost', float('na
       f"{cov_bloc.get('West', float('nan')):.1f}%) AND the higher")
 print("    notification incidence. The most likely driver is testing intensity:")
 print("    eastern states test far more for influenza, so more true infections are")
-print("    captured as notifications. Aggregation hides this -- a textbook reason to")
+print("    captured as notifications. Aggregation hides this, a textbook reason to")
 print("    stratify before trusting any ecological correlation.")
 
-# Coverage trend over time -- the clearer public-health message
+# Coverage trend over time
 trend = fact_vaccination.query("ags=='00'").sort_values("season")
 fig = px.line(trend, x="season", y="coverage_60plus_pct", markers=True,
               labels=dict(season="Season", coverage_60plus_pct="Coverage 60+ (%)"),
@@ -1232,9 +1135,6 @@ So:
 **Every forecast is judged against a seasonal-naive baseline** ("this week next year"). A model that cannot beat that baseline has earned nothing, and the metric table below reports it either way.
 
 #@@ CODE
-# =============================================================================
-# CELL 19 — Assemble the modelling dataset
-# =============================================================================
 import torch
 from darts import TimeSeries
 from darts.dataprocessing.transformers import Scaler
@@ -1252,12 +1152,11 @@ def q_ts(ts, q):
         return ts.quantile_timeseries(q)
     return ts.quantile(q)                       # darts >= 0.31
 
-
 print(f"torch {torch.__version__} | CUDA available: {torch.cuda.is_available()}")
 USE_GPU = torch.cuda.is_available()
 if USE_GPU:
     print(f"device: {torch.cuda.get_device_name(0)}")
-    # Lets A100 tensor cores accelerate fp32 matmuls -- free speedup, no code change.
+    # Lets A100 tensor cores accelerate fp32 matmuls.
     torch.set_float32_matmul_precision("high")
 else:
     print("No GPU -> training on CPU (slower but identical results)")
@@ -1288,18 +1187,17 @@ for ags in wide.columns:
     series_all.append(s)
     region_ids.append(ags)
 
-# --- Covariates -------------------------------------------------------------
-# Calendar terms are known arbitrarily far into the future -> future covariates.
-# Encoding the annual cycle as sin/cos avoids the model having to learn that
-# week 52 and week 1 are neighbours.
+# Covariates
+# Calendar terms are known into the future. sin/cos encoding saves the model
+# from having to learn that week 52 and week 1 are neighbours.
 full_idx = pd.date_range(wide.index.min(), wide.index.max() + pd.Timedelta(weeks=CFG["HORIZON"] + 4),
                          freq="W-MON")
 cov_df = pd.DataFrame(index=full_idx)
 woy = full_idx.isocalendar().week.astype(int).values
 cov_df["sin_year"] = np.sin(2 * np.pi * woy / 52.18)
 cov_df["cos_year"] = np.cos(2 * np.pi * woy / 52.18)
-# Explicit pandemic-regime flag, so the model can attribute the 2020-22 anomaly
-# to the intervention period instead of distorting the seasonal shape.
+# Regime flag so the model attributes the 2020-22 anomaly to the intervention
+# period instead of distorting the seasonal shape.
 cov_df["npi_regime"] = (((full_idx >= "2020-03-16") & (full_idx <= "2022-04-03"))
                         .astype("float32"))
 future_cov = TimeSeries.from_dataframe(cov_df.astype("float32"), freq="W-MON")
@@ -1307,25 +1205,21 @@ future_covs = [future_cov] * len(series_all)
 
 print(f"future covariates: {list(cov_df.columns)} over {len(full_idx)} weeks")
 
-# --- Train / holdout split (time-based, never random) -----------------------
+# Time-based split, never random
 cutoff = wide.index[-CFG["BACKTEST_WEEKS"]]
 train_all = [s.drop_after(cutoff) for s in series_all]
 print(f"\nsplit: train up to {cutoff:%Y-%m-%d} "
       f"({len(train_all[0])} weeks) | holdout {CFG['BACKTEST_WEEKS']} weeks")
 
-# One scaler per state. Darts can scale a list in one call, but then
-# inverse-transforming a single series later depends on positional matching --
-# fragile once the backtest returns nested lists. An explicit scaler per series
-# removes that ambiguity entirely.
+# One scaler per state. Darts can scale a list in one call, but inverse-
+# transforming a single series then depends on positional matching, which is
+# fragile once the backtest returns nested lists.
 scalers      = [Scaler().fit(tr) for tr in train_all]
 train_scaled = [sc.transform(tr) for sc, tr in zip(scalers, train_all)]
 full_scaled  = [sc.transform(s) for sc, s in zip(scalers, series_all)]
-print(f"fitted {len(scalers)} per-state scalers (fit on train only -- no leakage)")
+print(f"fitted {len(scalers)} per-state scalers (fit on train only, no leakage)")
 
 #@@ CODE
-# =============================================================================
-# CELL 20 — Baseline models (the bar every fancy model must clear)
-# =============================================================================
 from darts.models import NaiveSeasonal, NaiveDrift
 from darts.metrics import mae, rmse, mape
 
@@ -1344,8 +1238,8 @@ def evaluate(preds, actuals, label):
                          mape=mape(common, p2) if (common.values() > 1).all() else np.nan))
     return pd.DataFrame(rows)
 
-# Seasonal naive: "the same week one year ago". For weekly epidemic data this is
-# a genuinely strong baseline, which is exactly why it is the right benchmark.
+# "The same week one year ago". A strong baseline for weekly epidemic data,
+# which is why it is the benchmark.
 base_rows = []
 for name, mdl_factory in [("Seasonal naive (52w)", lambda: NaiveSeasonal(K=52)),
                           ("Naive drift", lambda: NaiveDrift())]:
@@ -1362,9 +1256,6 @@ print("Baseline performance over the full holdout window:")
 display(baseline_scores.groupby("model")[["mae", "rmse", "mape"]].mean().round(2))
 
 #@@ CODE
-# =============================================================================
-# CELL 21 — Train the global deep-learning model on GPU
-# =============================================================================
 from darts.models import NBEATSModel, TFTModel
 from pytorch_lightning.callbacks import EarlyStopping
 
@@ -1383,9 +1274,8 @@ trainer_kwargs = dict(
     log_every_n_steps=10,
     callbacks=[EarlyStopping(monitor="val_loss", patience=15, min_delta=1e-4, mode="min")],
 )
-# A100 supports bfloat16 natively. Enable if you want the extra speed; fp32 is
-# kept as the default because this dataset is small enough that precision is
-# free and reproducibility matters more than a few seconds.
+# A100 supports bfloat16. fp32 is the default because this dataset is small
+# enough that precision costs nothing.
 # if USE_GPU: trainer_kwargs["precision"] = "bf16-mixed"
 
 common = dict(
@@ -1401,14 +1291,14 @@ common = dict(
 )
 
 if CFG["MODEL"] == "TFT":
-    # TFT consumes future covariates natively and reports variable importance.
+    # TFT takes future covariates natively and reports variable importance.
     model = TFTModel(hidden_size=64, lstm_layers=1, num_attention_heads=4,
                      dropout=0.1, add_relative_index=False,
                      model_name="tft_are", **common)
     fit_kwargs = dict(future_covariates=future_covs)
 else:
-    # N-BEATS: no covariate support beyond past covariates, but its
-    # trend/seasonality basis expansion is a strong fit for epidemic curves.
+    # N-BEATS takes only past covariates, but its trend/seasonality basis
+    # expansion fits epidemic curves well.
     model = NBEATSModel(generic_architecture=False, num_blocks=3, num_stacks=2,
                         layer_widths=256, model_name="nbeats_are", **common)
     fit_kwargs = dict()
@@ -1422,11 +1312,8 @@ if USE_GPU:
     print(f"peak GPU memory: {torch.cuda.max_memory_allocated()/1e9:.2f} GB")
 
 #@@ CODE
-# =============================================================================
-# CELL 22 — Honest backtest: rolling-origin evaluation on the holdout
-# =============================================================================
-# retrain=False -> the model never sees holdout data. Every origin produces an
-# 8-week-ahead forecast, exactly as it would be used in practice.
+# retrain=False, so the model never sees holdout data. Every origin produces
+# an 8-week-ahead forecast, as it would be used in practice.
 
 print(f"Rolling-origin backtest: {H}-week horizon, stride 4, "
       f"{CFG['BACKTEST_WEEKS']}-week holdout ...")
@@ -1472,11 +1359,7 @@ if dl_mae >= best_base:
 MODEL_SCORES = summary.reset_index().rename(columns={"index": "model"})
 
 #@@ CODE
-# =============================================================================
-# CELL 23 — Refit on all data and forecast the next 8 weeks
-# =============================================================================
-# The deployed forecast must use every observation available, so we refit on the
-# full history with the epoch count the backtest validated.
+# Refit on the full history with the epoch count the backtest validated.
 
 print("Refitting on the complete series ...")
 final = model.untrained_model()
@@ -1506,7 +1389,7 @@ for i, (ags, ps) in enumerate(zip(region_ids, pred_scaled)):
 
 fact_forecast = (pd.DataFrame(fc_rows)
                  .merge(dim_region[["ags", "region", "region_short"]], on="ags", how="left"))
-# Intervals must not imply negative incidence
+# Intervals must not imply negative incidence.
 for c in ["forecast", "lo80", "hi80", "lo50", "hi50"]:
     fact_forecast[c] = fact_forecast[c].clip(lower=0)
 
@@ -1517,9 +1400,6 @@ display(fact_forecast.query("ags=='09'")[["iso_week", "horizon_weeks", "lo80",
                                           "forecast", "hi80"]])
 
 #@@ CODE
-# =============================================================================
-# CELL 24 — Visualise the forecast with prediction bands
-# =============================================================================
 SHOW = ["09", "05", "14", "02"]   # Bayern, NRW, Sachsen, Hamburg
 fig = make_subplots(rows=2, cols=2, subplot_titles=[
     dim_region.set_index("ags").loc[a, "region"] for a in SHOW],
@@ -1548,7 +1428,7 @@ for k, ags in enumerate(SHOW):
                              showlegend=(k == 0)), row=r, col=c)
 
 fig.update_layout(
-    title=f"{H}-week forecast of {tname} — {CFG['MODEL']} global model<br>"
+    title=f"{H}-week forecast of {tname}: {CFG['MODEL']} global model<br>"
           f"<sub>Trained across all 16 Bundesländer · shaded bands are quantile "
           f"prediction intervals</sub>",
     template="plotly_white", height=720, hovermode="x unified",
@@ -1574,13 +1454,9 @@ The export is a **star schema**, not one wide spreadsheet. This is deliberate an
 Written twice: **Parquet** (typed, compact, preferred by Power BI) and **CSV** (universal, Tableau-friendly).
 
 #@@ CODE
-# =============================================================================
-# CELL 25 — Export the star schema
-# =============================================================================
 OUT = CFG["OUT_DIR"]
 
-# A combined observed+forecast view: the single table that drives the main
-# dashboard visual. Same columns for both, distinguished by is_forecast.
+# Combined view driving the main dashboard visual, split on is_forecast.
 obs = (fact_incidence.query("age_group=='00+'")
        [["ags", "region", "region_short", "iso_week", "week_start", "season",
          "week_of_season", "pathogen", "cases", "incidence"]]
@@ -1640,12 +1516,6 @@ meta = dict(
 print(f"\nMANIFEST.json written · {len(list(OUT.glob('*')))} files in {OUT}")
 
 #@@ CODE
-# =============================================================================
-# CELL 26 — Auto-generate the README section (with live numbers)
-# =============================================================================
-# Numbers are computed, not typed. Re-running the notebook updates the README,
-# so the repository can never drift out of sync with the data.
-
 latest_week   = dim_date["iso_week"].iloc[-1]
 latest_cov    = trend["coverage_60plus_pct"].iloc[-1]
 latest_season = trend["season"].iloc[-1]
@@ -1684,9 +1554,9 @@ dead endpoints. Verified on 2026-08-19:
 - The **ArcGIS `RKI_COVID19` REST service** used by most 2021-era examples was retired with
   the COVID-19 dashboard.
 - **SurvStat@RKI 2.0** exposes only an interactive UI plus a registration-gated SOAP
-  interface — not usable for an automated pipeline.
+  interface, not usable for an automated pipeline.
 - **Destatis GENESIS-Online** REST v2 now rejects anonymous and `GAST` access
-  (`Code 15 – not authorised`) on both `genesis.destatis.de` and `regionalstatistik.de`;
+  (`Code 15 - not authorised`) on both `genesis.destatis.de` and `regionalstatistik.de`;
   it requires free registration. It is therefore wired in as *optional* enrichment,
   and the pipeline runs fully without it.
 - RKI's **`robert-koch-institut` GitHub organisation** is the current canonical channel:
@@ -1708,9 +1578,9 @@ Gemeindeschlüssel), joining on the numeric key rather than on names:
 - ID width differs (`'00'…'16'` vs `'0'…'16'`) → zero-padded.
 - Names differ (`Thüringen` vs `Thueringen`) → umlaut-folding lookup.
 - National aggregates are labelled `Deutschland`, `Bundesweit` or absent entirely
-  (DIVI publishes no national row — it is aggregated from the underlying bed counts).
+  (DIVI publishes no national row, it is aggregated from the underlying bed counts).
 - KV-Impfsurveillance district keys arrive in **three** widths; width-2 rows are
-  state-level aggregates, not districts, and are separated before any padding — a naive
+  state-level aggregates, not districts, and are separated before any padding, a naive
   `zfill(5)` would convert the Schleswig-Holstein aggregate into a non-existent district
   and double-count every state total.
 
@@ -1720,7 +1590,7 @@ Respiratory seasons run W40 → W39; `week_of_season` allows seasons to be overl
 one axis.
 
 **Missing values are handled per column, never blanket-filled.** The ICU emergency-reserve
-field is empty for early rows because the field was introduced later — a structural
+field is empty for early rows because the field was introduced later, a structural
 absence, left as `NaN` rather than imputed as zero capacity. Age group `Unbekannt` is
 retained for completeness accounting but excluded from rate calculations. Daily ICU data
 is aggregated to ISO weeks by *mean*, since bed occupancy is a stock, not a flow; partial
@@ -1728,8 +1598,8 @@ weeks at the series edges are dropped.
 
 **Denominators.** Population per state is recovered from RKI's own published figures
 (`population = cases / incidence × 100 000`, median across weeks with ≥50 cases). This is
-robust to the 2-decimal rounding in published incidence and — unlike an external
-population table — reconciles exactly with the officially published rates. Validated
+robust to the 2-decimal rounding in published incidence and, unlike an external
+population table, reconciles exactly with the officially published rates. Validated
 against Destatis figures where credentials are available.
 
 **Quality gates.** {meta['quality_checks_passed']}/{meta['quality_checks_total']} automated
@@ -1740,7 +1610,7 @@ range validity for all rates. Exported as `data_quality_report.csv`.
 **Forecasting.** Target: **ARE consultation incidence**, {n_seasons} seasons at state
 resolution. The lab-confirmed influenza series was deliberately *not* used as the primary
 target: it begins in 2020 and two of its six seasons were flattened by COVID-19
-non-pharmaceutical interventions — a structural break that would make a seasonal model
+non-pharmaceutical interventions, a structural break that would make a seasonal model
 systematically under-forecast real peaks. The intervention period is instead passed to the
 model as an explicit regime covariate.
 
@@ -1748,7 +1618,7 @@ A **global** {CFG['MODEL']} model (Darts / PyTorch) is trained across all 16 sta
 simultaneously, so each short series borrows seasonal structure from the other 15.
 Quantile regression yields calibrated prediction intervals. Evaluation is a
 rolling-origin backtest over a {CFG['BACKTEST_WEEKS']}-week holdout with `retrain=False`,
-benchmarked against a **seasonal-naive baseline** — reported whether or not the deep model
+benchmarked against a **seasonal-naive baseline**, reported whether or not the deep model
 wins. Training runs on an A100 GPU; every other pipeline step is CPU-only.
 
 ## Data privacy / GDPR
@@ -1762,7 +1632,7 @@ wins. Training runs on an A100 GPU; every other pipeline step is CPU-only.
   and statistical-disclosure control *before* publication.
 - **Small-number risk is respected.** The publisher already suppresses or coarsens low
   counts. This pipeline does not attempt to reconstruct or de-aggregate suppressed cells,
-  and does not link datasets at a granularity finer than the publisher released — the
+  and does not link datasets at a granularity finer than the publisher released, the
   district-level vaccination data is aggregated *upward* to state level, never combined
   with other sources to narrow a cohort.
 - **Ecological inference is labelled as such.** State-level associations between
@@ -1778,10 +1648,10 @@ wins. Training runs on an A100 GPU; every other pipeline step is CPU-only.
 1. **Seasonality is highly regular in timing, far less so in height.** Across
    {n_seasons} seasons the ARE consultation peak lands at a median of week
    {peak_med_wos:.0f} of the season (~{peak_month}), but peak height varies several-fold
-   between seasons — so capacity planning can rely on *when*, not on *how much*.
+   between seasons, so capacity planning can rely on *when*, not on *how much*.
 2. **The pandemic left a visible two-season hole, then a rebound.** Lab-confirmed
    influenza fell to near zero in 2020/21 and 2021/22 under non-pharmaceutical
-   interventions, then returned unusually early and sharply in 2022/23 — the
+   interventions, then returned unusually early and sharply in 2022/23, the
    'immunity-debt' pattern, and the reason the forecasting target was chosen as it was.
 3. **Regional variation is large and partly a surveillance artefact.**
    {top_state} reports several times the cumulative influenza incidence of {low_state},
@@ -1789,7 +1659,7 @@ wins. Training runs on an A100 GPU; every other pipeline step is CPU-only.
    eastern states average **{ew_cov_ost:.1f}%** vaccination coverage in the 60+ group
    against **{ew_cov_west:.1f}%** in the west, yet also record **{ew_ratio:.1f}×** the
    cumulative notification incidence. Higher prevention *and* higher recorded burden
-   points to testing intensity rather than infection pressure alone — the single most
+   points to testing intensity rather than infection pressure alone, the single most
    important interpretation trap to caption on any dashboard built from these data.
 4. **Vaccination coverage in the 60+ group remains below target.** At
    {latest_cov:.1f}% in {latest_season}, coverage sits
@@ -1820,21 +1690,13 @@ print(f"README_section.md written ({len(README):,} chars)")
 print(README[:1500] + "\n...\n[truncated in output; full text in the file]")
 
 #@@ CODE
-# =============================================================================
-# CELL 27 — Download ALL results
-# =============================================================================
-# Collects every artefact produced by this notebook -- data tables, charts,
-# quality report, model scores, README and provenance -- into one archive and
-# hands it to the browser. Colab's filesystem is ephemeral, so run this before
-# the runtime disconnects or the work is gone.
-
 import shutil
 
 SAVE_TO_DRIVE = False      # True -> also copy to Google Drive (prompts for auth)
 
 OUT = CFG["OUT_DIR"]
 
-# --- 1. charts: interactive HTML always, static PNG when kaleido is present ---
+# 1. charts: interactive HTML always, static PNG when kaleido is present
 fig_dir = OUT / "charts"
 fig_dir.mkdir(parents=True, exist_ok=True)
 png_ok = 0
@@ -1846,9 +1708,9 @@ for name, fig in FIGURES.items():
     except Exception:
         pass        # kaleido missing -> HTML only, not worth failing the export
 print(f"charts: {len(FIGURES)} HTML" + (f" + {png_ok} PNG" if png_ok else
-      " (no PNG -- run `pip install -q kaleido` before the EDA cells for static images)"))
+      " (no PNG, run `pip install -q kaleido` before the EDA cells for static images)"))
 
-# --- 2. the notebook itself, so the archive is self-contained ---
+# 2. the notebook itself, so the archive is self-contained
 if IN_COLAB:
     for nb_path in ["/content/RKI_Influenza_Surveillance_Pipeline.ipynb"] + \
                    sorted(Path("/content/drive/MyDrive").glob("**/RKI_Influenza*.ipynb"))[:1]:
@@ -1857,7 +1719,7 @@ if IN_COLAB:
             print(f"notebook copied: {Path(nb_path).name}")
             break
 
-# --- 3. one archive ---
+# 3. one archive
 zip_base = str(OUT.parent / "rki_dashboard_dataset")
 if Path(zip_base + ".zip").exists():
     Path(zip_base + ".zip").unlink()          # never ship a stale archive
@@ -1871,7 +1733,7 @@ for f in files_all:
     if f.is_file():
         print(f"   {f.stat().st_size/1024:>9,.1f} KB  {f.relative_to(OUT)}")
 
-# --- 4. hand it over ---
+# 4. hand it over
 if IN_COLAB:
     if SAVE_TO_DRIVE:
         from google.colab import drive
