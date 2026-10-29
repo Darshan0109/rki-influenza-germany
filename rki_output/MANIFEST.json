@@ -1,0 +1,252 @@
+{
+  "project": "Grippe-Surveillance Deutschland / German Influenza Surveillance",
+  "generated": "2026-08-19T12:33:56",
+  "forecast_target": "ARE consultation incidence",
+  "model": "NBEATS global",
+  "horizon_weeks": 8,
+  "gpu_used": true,
+  "data_current_to": "2026-08-10",
+  "licence": "Source data CC-BY 4.0, Robert Koch-Institut",
+  "sources": [
+    {
+      "key": "influenza",
+      "label": "Laborbestätigte Influenzafälle in Deutschland (IfSG)",
+      "url": "https://raw.githubusercontent.com/robert-koch-institut/Influenzafaelle_in_Deutschland/main/IfSG_Influenzafaelle.tsv",
+      "doi": "10.5281/zenodo.11276077",
+      "licence": "CC-BY 4.0",
+      "publisher": "Robert Koch-Institut",
+      "bytes": 684525,
+      "sha256": "0d9fcf21f3e2c0bd",
+      "retrieved": "2026-08-19 12:28",
+      "rows": 18141
+    },
+    {
+      "key": "rsv",
+      "label": "Respiratorische Synzytialvirusfälle in Deutschland (IfSG)",
+      "url": "https://raw.githubusercontent.com/robert-koch-institut/Respiratorische_Synzytialvirusfaelle_in_Deutschland/main/IfSG_RSVfaelle.tsv",
+      "doi": "10.5281/zenodo.13240693",
+      "licence": "CC-BY 4.0",
+      "publisher": "Robert Koch-Institut",
+      "bytes": 138156,
+      "sha256": "b09d6a68d57c0752",
+      "retrieved": "2026-08-19 12:28",
+      "rows": 3792
+    },
+    {
+      "key": "are",
+      "label": "ARE-Konsultationsinzidenz (Sentinel-Surveillance)",
+      "url": "https://raw.githubusercontent.com/robert-koch-institut/ARE-Konsultationsinzidenz/main/ARE-Konsultationsinzidenz.tsv",
+      "doi": "10.5281/zenodo.11235128",
+      "licence": "CC-BY 4.0",
+      "publisher": "Robert Koch-Institut",
+      "bytes": 971130,
+      "sha256": "31d9a41f7ee4a21d",
+      "retrieved": "2026-08-19 12:28",
+      "rows": 23634
+    },
+    {
+      "key": "icu",
+      "label": "Intensivkapazitäten und COVID-19-Intensivbettenbelegung (DIVI-Intensivregister)",
+      "url": "https://raw.githubusercontent.com/robert-koch-institut/Intensivkapazitaeten_und_COVID-19-Intensivbettenbelegung_in_Deutschland/main/Intensivregister_Bundeslaender_Kapazitaeten.csv",
+      "doi": "10.5281/zenodo.7676558",
+      "licence": "CC-BY 4.0",
+      "publisher": "Robert Koch-Institut",
+      "bytes": 3650097,
+      "sha256": "13206a3d24a1088a",
+      "retrieved": "2026-08-19 12:28",
+      "rows": 37488
+    },
+    {
+      "key": "vacc",
+      "label": "Impfquoten Erwachsene — KV-Impfsurveillance",
+      "url": "https://raw.githubusercontent.com/robert-koch-institut/Inanspruchnahme_von_Routineimpfungen_in_Deutschland-Ergebnisse_aus_der_KV-Impfsurveillance/main/KVIS_Impfquoten_Erwachsene.tsv",
+      "doi": "10.5281/zenodo.14742533",
+      "licence": "CC-BY 4.0",
+      "publisher": "Robert Koch-Institut",
+      "bytes": 27810715,
+      "sha256": "9b420203024f01a3",
+      "retrieved": "2026-08-19 12:28",
+      "rows": 206813
+    }
+  ],
+  "tables": [
+    {
+      "table": "dim_region",
+      "rows": 17,
+      "columns": [
+        "ags",
+        "region",
+        "iso_3166_2",
+        "region_short",
+        "lat",
+        "lon",
+        "is_national",
+        "east_west",
+        "population",
+        "pop_share_pct"
+      ]
+    },
+    {
+      "table": "dim_date",
+      "rows": 724,
+      "columns": [
+        "iso_week",
+        "week_start",
+        "week_end",
+        "iso_year",
+        "iso_week_no",
+        "season",
+        "week_of_season",
+        "month",
+        "quarter",
+        "year",
+        "is_resp_season"
+      ]
+    },
+    {
+      "table": "fact_incidence",
+      "rows": 45567,
+      "columns": [
+        "ags",
+        "iso_week",
+        "week_start",
+        "pathogen",
+        "age_group",
+        "cases",
+        "incidence",
+        "age_known",
+        "source",
+        "season",
+        "week_of_season",
+        "iso_year",
+        "iso_week_no",
+        "is_resp_season",
+        "region",
+        "region_short"
+      ]
+    },
+    {
+      "table": "fact_icu_capacity",
+      "rows": 5678,
+      "columns": [
+        "ags",
+        "iso_week",
+        "week_start",
+        "icu_beds_operable",
+        "icu_beds_occupied",
+        "icu_beds_free",
+        "icu_occupancy_rate",
+        "pct_units_staff_limited",
+        "icu_covid_cases",
+        "n_reporting_units",
+        "season",
+        "week_of_season",
+        "region",
+        "region_short",
+        "population",
+        "icu_beds_per_100k"
+      ]
+    },
+    {
+      "table": "fact_vaccination",
+      "rows": 289,
+      "columns": [
+        "ags",
+        "season",
+        "coverage_60plus_pct",
+        "population_60plus",
+        "n_kreise",
+        "region",
+        "region_short"
+      ]
+    },
+    {
+      "table": "fact_forecast",
+      "rows": 128,
+      "columns": [
+        "ags",
+        "week_start",
+        "iso_week",
+        "horizon_weeks",
+        "forecast",
+        "lo80",
+        "hi80",
+        "lo50",
+        "hi50",
+        "model",
+        "target",
+        "region",
+        "region_short"
+      ]
+    },
+    {
+      "table": "vw_incidence_with_forecast",
+      "rows": 11725,
+      "columns": [
+        "ags",
+        "region",
+        "region_short",
+        "iso_week",
+        "week_start",
+        "season",
+        "week_of_season",
+        "pathogen",
+        "cases",
+        "incidence",
+        "is_forecast",
+        "lo80",
+        "hi80",
+        "model"
+      ]
+    },
+    {
+      "table": "data_quality_report",
+      "rows": 21,
+      "columns": [
+        "dataset",
+        "check",
+        "status",
+        "detail"
+      ]
+    },
+    {
+      "table": "model_scores",
+      "rows": 3,
+      "columns": [
+        "model",
+        "mae",
+        "rmse",
+        "vs best baseline"
+      ]
+    },
+    {
+      "table": "source_provenance",
+      "rows": 5,
+      "columns": [
+        "key",
+        "label",
+        "url",
+        "doi",
+        "licence",
+        "publisher",
+        "bytes",
+        "sha256",
+        "retrieved",
+        "rows"
+      ]
+    },
+    {
+      "table": "season_peaks",
+      "rows": 14,
+      "columns": [
+        "season",
+        "peak_week",
+        "peak_wos",
+        "peak_incidence",
+        "peak_month"
+      ]
+    }
+  ],
+  "quality_checks_passed": 21,
+  "quality_checks_total": 21
+}

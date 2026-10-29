@@ -1,0 +1,4 @@
+﻿model,mae,rmse,vs best baseline
+Naive drift,1303.14,1397.57,+309.3%
+Seasonal naive (52w),318.41,406.51,-0.0%
+NBEATS (global),319.6,375.88,+0.4%

@@ -1,0 +1,22 @@
+﻿dataset,check,status,detail
+IfSG influenza,no gaps in weekly grid,PASS,0 missing week(s)
+IfSG influenza,value column populated,PASS,2.82% null
+IfSG influenza,all 16 states + national present,PASS,17 distinct AGS
+IfSG influenza,data current (<=28 days lag),PASS,16 days behind
+IfSG RSV,no gaps in weekly grid,PASS,0 missing week(s)
+IfSG RSV,value column populated,PASS,2.72% null
+IfSG RSV,all 16 states + national present,PASS,17 distinct AGS
+IfSG RSV,data current (<=28 days lag),PASS,16 days behind
+ARE,no gaps in weekly grid,PASS,0 missing week(s)
+ARE,value column populated,PASS,0.00% null
+ARE,all 16 states + national present,PASS,17 distinct AGS
+ARE,data current (<=28 days lag),PASS,16 days behind
+ICU,no gaps in weekly grid,PASS,0 missing week(s)
+ICU,value column populated,PASS,0.00% null
+ICU,all 16 states + national present,PASS,17 distinct AGS
+ICU,data current (<=28 days lag),PASS,9 days behind
+IfSG influenza,state sum reconciles to national row,PASS,median relative deviation 0.000%
+IfSG influenza,age bands sum to total,PASS,median deviation 0.000%
+all datasets,no invalid ISO week labels,PASS,0 quarantined label(s)
+KVIS vaccination,coverage within 0-100%,PASS,
+ICU,occupancy within 0-100%,PASS,
